@@ -195,6 +195,9 @@ async def predict(
     Gets predictions for an image URL using the hosted Roboflow model.
     """
     try:
+        # Strip whitespace from URL
+        image_url = image_url.strip()
+        
         # Construct Inference API URL
         # Format: https://detect.roboflow.com/dataset/version
         inference_url = f"https://detect.roboflow.com/{PROJECT}/{MODEL_VERSION}"
