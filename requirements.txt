@@ -3,3 +3,5 @@ uvicorn
 roboflow
 python-multipart
 python-dotenv
+requests
+gunicorn
