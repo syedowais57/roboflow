@@ -4,7 +4,7 @@ import zipfile
 import uuid
 import base64
 import requests
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from roboflow import Roboflow
@@ -18,6 +18,7 @@ load_dotenv()
 API_KEY = os.getenv("ROBOFLOW_PRIVATE_API_KEY")
 WORKSPACE = os.getenv("ROBOFLOW_WORKSPACE")
 PROJECT = os.getenv("ROBOFLOW_PROJECT")
+MODEL_VERSION = os.getenv("ROBOFLOW_MODEL_VERSION", "1")
 
 if not all([API_KEY, WORKSPACE, PROJECT]):
     raise RuntimeError("Missing required environment variables")
@@ -179,3 +180,54 @@ async def upload_dataset_rest(file: UploadFile = File(...)):
             os.remove(temp_zip_path)
         if os.path.exists(extract_path):
             shutil.rmtree(extract_path)
+
+# =============================
+# PREDICTION ENDPOINT
+# =============================
+
+@app.post("/predict")
+async def predict(
+    image_url: str = Query(..., description="Publicly accessible URL of the image to analyze"),
+    confidence: int = Query(40, description="Minimum confidence threshold (0-100). Default: 40"),
+    overlap: int = Query(30, description="Maximum overlap threshold for NMS (0-100). Default: 30")
+):
+    """
+    Gets predictions for an image URL using the hosted Roboflow model.
+    """
+    try:
+        # Construct Inference API URL
+        # Format: https://detect.roboflow.com/dataset/version
+        inference_url = f"https://detect.roboflow.com/{PROJECT}/{MODEL_VERSION}"
+        
+        params = {
+            "api_key": API_KEY,
+            "image": image_url,
+            "confidence": confidence,
+            "overlap": overlap
+        }
+        
+        response = requests.post(inference_url, params=params)
+        
+        if response.status_code != 200:
+            return JSONResponse(
+                status_code=response.status_code,
+                content={
+                    "status": "error",
+                    "message": "Inference failed",
+                    "roboflow_response": response.text
+                }
+            )
+            
+        return JSONResponse({
+            "status": "success",
+            "predictions": response.json()
+        })
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": str(e)
+            }
+        )
