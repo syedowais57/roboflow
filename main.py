@@ -2,6 +2,8 @@ import os
 import shutil
 import zipfile
 import uuid
+import base64
+import requests
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
@@ -31,7 +33,7 @@ def health():
     return {"status": "ok"}
 
 # =============================
-# DATASET UPLOAD ENDPOINT
+# DATASET UPLOAD ENDPOINT (SDK)
 # =============================
 
 @app.post("/upload-dataset")
@@ -77,6 +79,88 @@ async def upload_dataset(file: UploadFile = File(...)):
             "status": "success",
             "message": "Dataset uploaded successfully",
             "request_id": request_id
+        })
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": str(e),
+                "request_id": request_id
+            }
+        )
+
+    finally:
+        # Cleanup
+        if os.path.exists(temp_zip_path):
+            os.remove(temp_zip_path)
+        if os.path.exists(extract_path):
+            shutil.rmtree(extract_path)
+
+# =============================
+# REST API UPLOAD ENDPOINT
+# =============================
+
+@app.post("/upload-dataset-rest")
+async def upload_dataset_rest(file: UploadFile = File(...)):
+    """
+    Uploads a dataset via Roboflow REST API directly.
+    """
+    if not file.filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Only ZIP files allowed")
+
+    request_id = str(uuid.uuid4())
+    temp_zip_path = f"temp_rest_{request_id}.zip"
+    extract_path = f"temp_dataset_rest_{request_id}"
+
+    try:
+        # Save ZIP
+        with open(temp_zip_path, "wb") as buffer:
+            buffer.write(await file.read())
+
+        # Extract ZIP
+        os.makedirs(extract_path, exist_ok=True)
+        with zipfile.ZipFile(temp_zip_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_path)
+
+        # Upload images to Roboflow via REST API
+        upload_results = []
+        image_extensions = (".jpg", ".jpeg", ".png", ".bmp")
+        
+        # We'll recursively find all images in the extracted folder
+        for root, dirs, files in os.walk(extract_path):
+            for filename in files:
+                if filename.lower().endswith(image_extensions):
+                    image_path = os.path.join(root, filename)
+                    
+                    with open(image_path, "rb") as image_file:
+                        image_data = base64.b64encode(image_file.read()).decode("utf-8")
+                    
+                    # Construct REST API URL
+                    upload_url = f"https://api.roboflow.com/dataset/{PROJECT}/upload"
+                    
+                    params = {
+                        "api_key": API_KEY,
+                        "name": filename,
+                        "split": "train" # Default split
+                    }
+                    
+                    response = requests.post(upload_url, params=params, data=image_data, headers={
+                        "Content-Type": "application/x-www-form-urlencoded"
+                    })
+                    
+                    upload_results.append({
+                        "file": filename,
+                        "status": response.status_code,
+                        "response": response.json() if response.status_code == 200 else response.text
+                    })
+
+        return JSONResponse({
+            "status": "success",
+            "message": f"Processed {len(upload_results)} images via REST API",
+            "request_id": request_id,
+            "results": upload_results
         })
 
     except Exception as e:
