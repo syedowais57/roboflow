@@ -3,7 +3,7 @@ services:
     name: roboflow-upload-service
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 2 -k uvicorn.workers.UvicornWorker --timeout 120 main:app
+    startCommand: gunicorn -w 1 -k uvicorn.workers.UvicornWorker --timeout 120 main:app
     envVars:
       - key: ROBOFLOW_PRIVATE_API_KEY
         sync: false
