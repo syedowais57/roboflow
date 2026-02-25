@@ -73,7 +73,7 @@ async def upload_dataset(file: UploadFile = File(...)):
             dataset_path=extract_path,
             project_name=PROJECT,
             project_type="object-detection",
-            num_workers=8
+            num_workers=2
         )
 
         return JSONResponse({
