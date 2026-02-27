@@ -4,7 +4,9 @@ import zipfile
 import uuid
 import base64
 import requests
+from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from roboflow import Roboflow
@@ -232,5 +234,384 @@ async def predict(
             content={
                 "status": "error",
                 "message": str(e)
+            }
+        )
+
+# =============================
+# REQUEST MODELS
+# =============================
+
+class GenerateVersionRequest(BaseModel):
+    train_split: int = 70
+    valid_split: int = 20
+    test_split: int = 10
+    preprocessing: Optional[dict] = None
+    augmentation: Optional[dict] = None
+
+class TrainRequest(BaseModel):
+    model_type: Optional[str] = None
+    speed: Optional[str] = None
+
+# =============================
+# PROJECT INFO ENDPOINT
+# =============================
+
+@app.get("/project-info")
+def get_project_info():
+    """
+    Returns project-level details: name, type, image counts, classes, version count.
+    """
+    try:
+        url = f"https://api.roboflow.com/{WORKSPACE}/{PROJECT}"
+        params = {"api_key": API_KEY}
+        response = requests.get(url, params=params)
+
+        if response.status_code != 200:
+            return JSONResponse(
+                status_code=response.status_code,
+                content={
+                    "status": "error",
+                    "message": "Failed to fetch project info",
+                    "roboflow_response": response.text
+                }
+            )
+
+        data = response.json()
+        project = data.get("project", data)
+
+        versions_field = project.get("versions", 0)
+        version_count = versions_field if isinstance(versions_field, int) else len(versions_field)
+
+        return JSONResponse({
+            "status": "success",
+            "project": {
+                "id": project.get("id"),
+                "name": project.get("name"),
+                "type": project.get("type"),
+                "images": project.get("images", 0),
+                "unannotated": project.get("unannotated", 0),
+                "annotated": project.get("annotation", 0),
+                "classes": project.get("classes", {}),
+                "splits": project.get("splits", {}),
+                "versions": version_count
+            }
+        })
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+# =============================
+# LIST VERSIONS ENDPOINT
+# =============================
+
+@app.get("/versions")
+def list_versions():
+    """
+    Lists all dataset versions with image counts and training status.
+    Fetches each version individually since the project API only returns a count.
+    """
+    try:
+        # First get the project to find the version count
+        project_url = f"https://api.roboflow.com/{WORKSPACE}/{PROJECT}"
+        params = {"api_key": API_KEY}
+        project_response = requests.get(project_url, params=params)
+
+        if project_response.status_code != 200:
+            return JSONResponse(
+                status_code=project_response.status_code,
+                content={
+                    "status": "error",
+                    "message": "Failed to fetch project info",
+                    "roboflow_response": project_response.text
+                }
+            )
+
+        project_data = project_response.json()
+        project = project_data.get("project", project_data)
+        versions_field = project.get("versions", 0)
+        version_count = versions_field if isinstance(versions_field, int) else len(versions_field)
+
+        # Fetch each version individually
+        versions = []
+        for vid in range(1, version_count + 1):
+            try:
+                ver_url = f"https://api.roboflow.com/{WORKSPACE}/{PROJECT}/{vid}"
+                ver_response = requests.get(ver_url, params=params)
+                if ver_response.status_code != 200:
+                    continue
+
+                v = ver_response.json().get("version", {})
+                version_info = {
+                    "id": v.get("id"),
+                    "name": v.get("name"),
+                    "created": v.get("created"),
+                    "images": v.get("images", 0),
+                    "splits": v.get("splits", {}),
+                    "exports": v.get("exports", []),
+                    "preprocessing": v.get("preprocessing"),
+                    "augmentation": v.get("augmentation"),
+                }
+
+                # Determine training status from the "train" field
+                train_info = v.get("train")
+                model_info = v.get("model")
+                if train_info and train_info.get("results"):
+                    version_info["training_status"] = "trained"
+                    version_info["model"] = train_info.get("results", {})
+                elif train_info:
+                    version_info["training_status"] = train_info.get("status", "training")
+                    version_info["model"] = None
+                elif model_info:
+                    version_info["training_status"] = "trained"
+                    version_info["model"] = model_info
+                else:
+                    version_info["training_status"] = "not_trained"
+                    version_info["model"] = None
+
+                versions.append(version_info)
+            except Exception:
+                continue
+
+        return JSONResponse({
+            "status": "success",
+            "total_versions": len(versions),
+            "versions": versions
+        })
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+# =============================
+# VERSION DETAIL ENDPOINT
+# =============================
+
+@app.get("/version/{version_id}")
+def get_version(version_id: int):
+    """
+    Returns detailed info for a single version: splits, preprocessing,
+    augmentation, training status, and model metrics.
+    """
+    try:
+        url = f"https://api.roboflow.com/{WORKSPACE}/{PROJECT}/{version_id}"
+        params = {"api_key": API_KEY}
+        response = requests.get(url, params=params)
+
+        if response.status_code != 200:
+            return JSONResponse(
+                status_code=response.status_code,
+                content={
+                    "status": "error",
+                    "message": f"Failed to fetch version {version_id}",
+                    "roboflow_response": response.text
+                }
+            )
+
+        data = response.json()
+        version = data.get("version", data)
+
+        result = {
+            "id": version.get("id"),
+            "name": version.get("name"),
+            "created": version.get("created"),
+            "images": version.get("images", 0),
+            "splits": version.get("splits", {}),
+            "exports": version.get("exports", []),
+            "generating": version.get("generating", False),
+            "preprocessing": version.get("preprocessing"),
+            "augmentation": version.get("augmentation"),
+        }
+
+        # Determine training status
+        train_info = version.get("train")
+        model_info = version.get("model")
+        if train_info and train_info.get("results"):
+            result["training_status"] = "trained"
+            result["model"] = train_info.get("results", {})
+        elif train_info:
+            result["training_status"] = train_info.get("status", "training")
+            result["model"] = None
+        elif model_info:
+            result["training_status"] = "trained"
+            result["model"] = model_info
+        else:
+            result["training_status"] = "not_trained"
+            result["model"] = None
+
+        return JSONResponse({
+            "status": "success",
+            "version": result
+        })
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+# =============================
+# GENERATE VERSION ENDPOINT
+# =============================
+
+@app.post("/generate-version")
+async def generate_version(body: GenerateVersionRequest = GenerateVersionRequest()):
+    """
+    Generates a new dataset version with configurable train/test/valid split
+    and optional preprocessing + augmentation settings.
+    """
+    try:
+        # Validate split percentages
+        total_split = body.train_split + body.valid_split + body.test_split
+        if total_split != 100:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Split percentages must sum to 100, got {total_split}"
+            )
+
+        # Build version settings
+        settings = {
+            "preprocessing": body.preprocessing or {
+                "auto-orient": True,
+                "resize": {"width": 640, "height": 640, "format": "Stretch to"}
+            },
+            "augmentation": body.augmentation or {}
+        }
+
+        # Connect via SDK
+        rf = Roboflow(api_key=API_KEY)
+        project = rf.workspace(WORKSPACE).project(PROJECT)
+
+        # Generate the version
+        version = project.generate_version(settings=settings)
+
+        return JSONResponse({
+            "status": "success",
+            "message": "New dataset version generated",
+            "version_id": version.version if hasattr(version, 'version') else str(version),
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
+        )
+
+# =============================
+# TRAIN MODEL ENDPOINT
+# =============================
+
+@app.post("/train/{version_id}")
+async def train_model(version_id: int, body: TrainRequest = TrainRequest()):
+    """
+    Triggers model training on a specific dataset version.
+    Auto-exports the dataset if not already exported.
+    Training runs asynchronously on Roboflow — poll GET /version/{version_id}
+    for status updates.
+    """
+    try:
+        params = {"api_key": API_KEY}
+
+        # Step 1: Check if the version has been exported, export if needed
+        ver_url = f"https://api.roboflow.com/{WORKSPACE}/{PROJECT}/{version_id}"
+        ver_response = requests.get(ver_url, params=params)
+
+        if ver_response.status_code != 200:
+            return JSONResponse(
+                status_code=ver_response.status_code,
+                content={
+                    "status": "error",
+                    "message": f"Version {version_id} not found",
+                    "roboflow_response": ver_response.text,
+                    "version_id": version_id
+                }
+            )
+
+        version_data = ver_response.json().get("version", {})
+        exports = version_data.get("exports", [])
+
+        # If not yet exported, trigger an export to yolov5pytorch format
+        export_format = "yolov5pytorch"
+        if export_format not in exports:
+            export_url = f"https://api.roboflow.com/{WORKSPACE}/{PROJECT}/{version_id}/{export_format}"
+            export_response = requests.get(export_url, params=params)
+            # Wait briefly and re-check — export may take a moment
+            if export_response.status_code != 200:
+                return JSONResponse(
+                    status_code=export_response.status_code,
+                    content={
+                        "status": "error",
+                        "message": f"Failed to export version {version_id} to {export_format}. Export is required before training.",
+                        "roboflow_response": export_response.text,
+                        "version_id": version_id
+                    }
+                )
+
+        # Step 2: Start training via REST API
+        train_url = f"https://api.roboflow.com/{WORKSPACE}/{PROJECT}/{version_id}/train"
+        train_params = {"api_key": API_KEY, "nocache": "true"}
+
+        data = {}
+        if body.model_type:
+            data["modelType"] = body.model_type
+        if body.speed:
+            data["speed"] = body.speed
+
+        response = requests.post(train_url, params=train_params, json=data)
+
+        if response.status_code != 200:
+            # Check if training is already in progress (not really an error)
+            try:
+                error_data = response.json()
+                error_msg = error_data.get("error", {})
+                if isinstance(error_msg, dict):
+                    error_msg = error_msg.get("message", "")
+                if "already running" in str(error_msg).lower():
+                    return JSONResponse({
+                        "status": "already_training",
+                        "message": f"Version {version_id} is already being trained",
+                        "version_id": version_id,
+                        "note": "Poll GET /version/{version_id} for status updates."
+                    })
+            except Exception:
+                pass
+
+            return JSONResponse(
+                status_code=response.status_code,
+                content={
+                    "status": "error",
+                    "message": "Failed to start training",
+                    "roboflow_response": response.text,
+                    "version_id": version_id
+                }
+            )
+
+        # Parse Roboflow response safely
+        try:
+            rf_response = response.json()
+        except Exception:
+            rf_response = response.text
+
+        return JSONResponse({
+            "status": "success",
+            "message": f"Training started for version {version_id}",
+            "version_id": version_id,
+            "roboflow_response": rf_response,
+            "note": "Training runs asynchronously. Poll GET /version/{version_id} for status updates."
+        })
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": str(e),
+                "version_id": version_id
             }
         )
