@@ -1,0 +1,187 @@
+{
+  "endpoints": {
+    "1_health": {
+      "method": "GET",
+      "url": "/health",
+      "request": null,
+      "response": {
+        "status": "ok"
+      }
+    },
+
+    "2_upload_dataset_sdk": {
+      "method": "POST",
+      "url": "/upload-dataset",
+      "content_type": "multipart/form-data",
+      "request": {
+        "file": "<ZIP file with data.yaml at root>"
+      },
+      "response": {
+        "status": "success",
+        "message": "Dataset uploaded successfully",
+        "request_id": "e.g. 3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+      }
+    },
+
+    "3_upload_dataset_rest": {
+      "method": "POST",
+      "url": "/upload-dataset-rest",
+      "content_type": "multipart/form-data",
+      "request": {
+        "file": "<ZIP file with images (.jpg, .jpeg, .png, .bmp)>"
+      },
+      "response": {
+        "status": "success",
+        "message": "Processed 10 images via REST API",
+        "request_id": "e.g. 3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+        "results": [
+          {
+            "file": "image1.jpg",
+            "status": 200,
+            "response": {}
+          }
+        ]
+      }
+    },
+
+    "4_predict": {
+      "method": "POST",
+      "url": "/predict",
+      "content_type": "query_parameters",
+      "request": {
+        "image_url": "https://example.com/floor-plan.jpg  (required, publicly accessible URL)",
+        "confidence": "40  (optional, 0-100, default: 40)",
+        "overlap": "30  (optional, 0-100, default: 30)"
+      },
+      "example_url": "/predict?image_url=https://example.com/floor-plan.jpg&confidence=40&overlap=30",
+      "response": {
+        "status": "success",
+        "predictions": {
+          "time": 0.053,
+          "image": { "width": 640, "height": 640 },
+          "predictions": [
+            {
+              "x": 320.5,
+              "y": 240.3,
+              "width": 50,
+              "height": 80,
+              "confidence": 0.92,
+              "class": "Door",
+              "class_id": 1
+            }
+          ]
+        }
+      }
+    },
+
+    "5_project_info": {
+      "method": "GET",
+      "url": "/project-info",
+      "request": null,
+      "response": {
+        "status": "success",
+        "project": {
+          "id": "site-sync/entity-detection-ykdwv",
+          "name": "Entity detection",
+          "type": "object-detection",
+          "images": 20,
+          "unannotated": 17,
+          "annotated": "entities",
+          "classes": { "Window": 36, "Door": 96, "Toilet": 21 },
+          "splits": { "train": 16, "valid": 2, "test": 2 },
+          "versions": 7
+        }
+      }
+    },
+
+    "6_list_versions": {
+      "method": "GET",
+      "url": "/versions",
+      "request": null,
+      "response": {
+        "status": "success",
+        "total_versions": 7,
+        "versions": [
+          {
+            "id": "site-sync/entity-detection-ykdwv/7",
+            "name": "2026-02-27 9:01am",
+            "images": 20,
+            "splits": { "train": 16, "valid": 2, "test": 2 },
+            "exports": ["coco", "yolov5pytorch"],
+            "training_status": "trained",
+            "model": { "map": 0.767, "precision": 0.505, "recall": 0.847 }
+          }
+        ]
+      }
+    },
+
+    "7_version_detail": {
+      "method": "GET",
+      "url": "/version/{version_id}",
+      "request": {
+        "version_id": "7  (path parameter, integer)"
+      },
+      "example_url": "/version/7",
+      "response": {
+        "status": "success",
+        "version": {
+          "id": "site-sync/entity-detection-ykdwv/7",
+          "name": "2026-02-27 9:01am",
+          "images": 20,
+          "splits": { "valid": 2, "test": 2, "train": 16 },
+          "exports": ["coco", "yolov5pytorch"],
+          "generating": false,
+          "preprocessing": { "auto-orient": true, "resize": { "width": 640, "height": 640 } },
+          "augmentation": {},
+          "training_status": "trained | running | not_trained",
+          "model": { "map": 0.767, "precision": 0.505, "recall": 0.847, "finished_epochs": 315 }
+        }
+      }
+    },
+
+    "8_generate_version": {
+      "method": "POST",
+      "url": "/generate-version",
+      "content_type": "application/json",
+      "request": {
+        "train_split": 70,
+        "valid_split": 20,
+        "test_split": 10,
+        "preprocessing": null,
+        "augmentation": null
+      },
+      "note": "All fields are optional. Defaults: 70/20/10 split, auto-orient + 640x640 resize.",
+      "response": {
+        "status": "success",
+        "message": "New dataset version generated",
+        "version_id": "8"
+      }
+    },
+
+    "9_train": {
+      "method": "POST",
+      "url": "/train/{version_id}",
+      "content_type": "application/json",
+      "request": {
+        "version_id": "7  (path parameter, integer)",
+        "body": {
+          "model_type": "null  (optional: object-detection | classification | instance-segmentation)",
+          "speed": "null  (optional: fast | accurate)"
+        }
+      },
+      "example_url": "/train/7",
+      "response_success": {
+        "status": "success",
+        "message": "Training started for version 7",
+        "version_id": 7,
+        "note": "Training runs asynchronously. Poll GET /version/{version_id} for status updates."
+      },
+      "response_already_training": {
+        "status": "already_training",
+        "message": "Version 7 is already being trained",
+        "version_id": 7,
+        "note": "Poll GET /version/{version_id} for status updates."
+      }
+    }
+  }
+}
