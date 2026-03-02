@@ -191,7 +191,8 @@ async def upload_dataset_rest(file: UploadFile = File(...)):
 async def predict(
     image_url: str = Query(..., description="Publicly accessible URL of the image to analyze"),
     confidence: int = Query(40, description="Minimum confidence threshold (0-100). Default: 40"),
-    overlap: int = Query(30, description="Maximum overlap threshold for NMS (0-100). Default: 30")
+    overlap: int = Query(30, description="Maximum overlap threshold for NMS (0-100). Default: 30"),
+    model_version: str = Query(None, description="Model version to use for inference. Defaults to ROBOFLOW_MODEL_VERSION env var.")
 ):
     """
     Gets predictions for an image URL using the hosted Roboflow model.
@@ -200,9 +201,11 @@ async def predict(
         # Strip whitespace from URL
         image_url = image_url.strip()
         
+        # Use provided version or fall back to env var
+        version = model_version if model_version else MODEL_VERSION
+
         # Construct Inference API URL
-        # Format: https://detect.roboflow.com/dataset/version
-        inference_url = f"https://detect.roboflow.com/{PROJECT}/{MODEL_VERSION}"
+        inference_url = f"https://detect.roboflow.com/{PROJECT}/{version}"
         
         params = {
             "api_key": API_KEY,
